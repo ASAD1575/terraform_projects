@@ -12,8 +12,8 @@ provider "aws" {
   region = "eu-north-1"
 }
 
-resource "aws_ecr_repository" "my-app-repo" {
-  name                 = "my-ecr-repository"
+resource "aws_ecr_repository" "myapprepo" {
+  name                 = "myecrrepository"
   image_tag_mutability = "MUTABLE"
   tags = {
     Name = "my-ecr-repo"
@@ -25,7 +25,7 @@ resource "aws_ecr_repository" "my-app-repo" {
 }
 
 resource "aws_ecr_lifecycle_policy" "my_ecr_lifecycle_policy" {
-  repository = aws_ecr_repository.my-app-repo.name
+  repository = aws_ecr_repository.myapprepo.name
 
   policy = jsonencode({
     rules = [
@@ -61,9 +61,36 @@ data "aws_ami" "ubuntu_latest" {
   
 }
 
+resource "aws_vpc" "my_vpc" {
+  cidr_block = "10.0.0.0/16"
+  enable_dns_support = true
+  enable_dns_hostnames = true
+  instance_tenancy = "default"
+  tags = {
+    Name = "my_vpc"
+  }
+  
+}
+
+resource "aws_subnet" "public_subnet" {
+  vpc_id            = aws_vpc.my_vpc.id
+  cidr_block        = "10.0.0.0/24"
+  count             = 2
+  availability_zone = element(data.aws_availability_zones.available.names, count.index)
+  map_public_ip_on_launch = true
+  tags = {
+    Name = "public_subnet_${count.index + 1}"
+  }
+  
+}
+
 resource "aws_security_group" "ec2_sg" {
   name        = "ec2_security_group"
   description = "Security group for EC2 instances"
+  vpc_id      = aws_vpc.my_vpc.id
+  tags = {
+    Name = "ec2_security_group"
+  }
 
   ingress {
     description = "Allow SSH access"
@@ -104,7 +131,7 @@ resource "tls_private_key" "ssh_key" {
 }
 
 # Create Key Pair for EC2 Instances
-resource "aws_key_pair" "generated_key" {
+resource "aws_key_pair" "key_generated" {
   key_name   = "terraform_generated_key_1"
   public_key = tls_private_key.ssh_key.public_key_openssh
     tags = {
@@ -115,7 +142,7 @@ resource "aws_key_pair" "generated_key" {
 # Create Local File to store the private key
 resource "local_file" "private_key_pem" {
   content  = tls_private_key.ssh_key.private_key_pem
-  filename = "${path.module}/ec2_key.pem"
+  filename = "${path.module}/ec2key.pem"
   file_permission = "0600"
 }
 
@@ -123,8 +150,10 @@ resource "local_file" "private_key_pem" {
 resource "aws_instance" "my_ec2_instance" {
   ami           = data.aws_ami.ubuntu_latest.id
   instance_type = "t3.micro"
-  key_name      =  aws_key_pair.generated_key.key_name
+  key_name      =  aws_key_pair.key_generated.key_name
   security_groups = [aws_security_group.ec2_sg.name]
+  subnet_id     = aws_subnet.public_subnet[0].id
+  associate_public_ip_address = true
 
   tags = {
     Name = "MyEC2Instance"
